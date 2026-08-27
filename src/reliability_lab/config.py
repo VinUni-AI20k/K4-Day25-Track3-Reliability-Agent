@@ -19,6 +19,7 @@ class CircuitBreakerConfig(BaseModel):
     reset_timeout_seconds: float = Field(gt=0)
     success_threshold: int = Field(gt=0)
     backend: str = "memory"  # "memory" (per-process) or "redis" (shared across instances)
+    resilient: bool = True  # backend=="redis": auto-fall back to a local breaker if Redis is down
 
 
 class CacheConfig(BaseModel):
@@ -27,6 +28,7 @@ class CacheConfig(BaseModel):
     ttl_seconds: int = Field(gt=0)
     similarity_threshold: float = Field(ge=0.0, le=1.0)
     redis_url: str = "redis://localhost:6379/0"
+    resilient: bool = True  # backend=="redis": auto-fall back to a local cache if Redis is down
 
 
 class LoadTestConfig(BaseModel):

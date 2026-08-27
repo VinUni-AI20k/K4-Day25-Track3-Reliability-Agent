@@ -176,6 +176,9 @@ class SharedRedisCache:
         ttl_seconds: int,
         similarity_threshold: float,
         prefix: str = "rl:cache:",
+        *,
+        connect_timeout: float = 10.0,
+        retries: int = 3,
     ):
         import redis as redis_lib
         from redis.backoff import ExponentialBackoff
@@ -191,9 +194,9 @@ class SharedRedisCache:
         self._redis: Any = redis_lib.Redis.from_url(
             redis_url,
             decode_responses=True,
-            socket_connect_timeout=10,
-            socket_timeout=10,
-            retry=Retry(ExponentialBackoff(cap=1.0, base=0.2), retries=3),
+            socket_connect_timeout=connect_timeout,
+            socket_timeout=connect_timeout,
+            retry=Retry(ExponentialBackoff(cap=1.0, base=0.2), retries=retries),
             retry_on_timeout=True,
             retry_on_error=[redis_lib.exceptions.ConnectionError, redis_lib.exceptions.TimeoutError],
         )
@@ -274,3 +277,104 @@ class SharedRedisCache:
     def _query_hash(query: str) -> str:
         """Deterministic short hash for a query string."""
         return hashlib.md5(query.lower().strip().encode()).hexdigest()[:12]
+
+
+# ---------------------------------------------------------------------------
+# Graceful degradation: Redis cache with an in-process fallback
+# ---------------------------------------------------------------------------
+
+
+class ResilientCache:
+    """``SharedRedisCache`` that falls back to an in-process ``ResponseCache``
+    whenever Redis is unreachable, and promotes itself back once Redis returns.
+
+    - If Redis is down at construction time, it starts degraded (no exception).
+    - If a Redis call raises mid-flight, that call is served from the local
+      cache and the backend is demoted for ``recheck_seconds`` before the next
+      Redis attempt.
+    - Every ``set`` is mirrored to the local cache too, so a later demotion
+      still has warm data to serve.
+
+    Same ``get``/``set``/``false_hit_log`` contract as the other two caches.
+    """
+
+    def __init__(
+        self,
+        redis_url: str,
+        ttl_seconds: int,
+        similarity_threshold: float,
+        *,
+        prefix: str = "rl:cache:",
+        recheck_seconds: float = 10.0,
+        connect_timeout: float = 10.0,
+        retries: int = 3,
+    ):
+        import redis as redis_lib
+
+        self.ttl_seconds = ttl_seconds
+        self.similarity_threshold = similarity_threshold
+        self._recheck_seconds = recheck_seconds
+        self._redis_error = redis_lib.exceptions.RedisError
+        self._local = ResponseCache(ttl_seconds, similarity_threshold)
+        self._degraded_until = 0.0
+        self.degraded_events = 0  # observability: how many times we fell back
+
+        self._redis_cache: SharedRedisCache | None
+        try:
+            self._redis_cache = SharedRedisCache(
+                redis_url,
+                ttl_seconds,
+                similarity_threshold,
+                prefix=prefix,
+                connect_timeout=connect_timeout,
+                retries=retries,
+            )
+            if not self._redis_cache.ping():
+                raise ConnectionError("redis ping failed")
+        except Exception:  # noqa: BLE001 - any construction failure ⇒ start degraded
+            self._redis_cache = None
+            self._degraded_until = time.monotonic() + recheck_seconds
+            self.degraded_events += 1
+
+    # -- backend selection ----------------------------------------------
+    def _redis_ready(self) -> bool:
+        return self._redis_cache is not None and time.monotonic() >= self._degraded_until
+
+    def _demote(self) -> None:
+        self._degraded_until = time.monotonic() + self._recheck_seconds
+        self.degraded_events += 1
+
+    @property
+    def degraded(self) -> bool:
+        return not self._redis_ready()
+
+    @property
+    def false_hit_log(self) -> list[dict[str, object]]:
+        rc = self._redis_cache
+        if rc is not None and not self.degraded:
+            return rc.false_hit_log
+        return self._local.false_hit_log
+
+    # -- cache API -----------------------------------------------------
+    def get(self, query: str) -> tuple[str | None, float]:
+        if self._redis_ready():
+            assert self._redis_cache is not None
+            try:
+                return self._redis_cache.get(query)
+            except self._redis_error:
+                self._demote()
+        return self._local.get(query)
+
+    def set(self, query: str, value: str, metadata: dict[str, str] | None = None) -> None:
+        if self._redis_ready():
+            assert self._redis_cache is not None
+            try:
+                self._redis_cache.set(query, value, metadata)
+            except self._redis_error:
+                self._demote()
+        # Mirror to local so a later demotion still has the entry.
+        self._local.set(query, value, metadata)
+
+    def close(self) -> None:
+        if self._redis_cache is not None:
+            self._redis_cache.close()

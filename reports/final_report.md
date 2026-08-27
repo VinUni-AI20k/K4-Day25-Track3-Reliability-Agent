@@ -79,10 +79,12 @@ Key implementation notes:
 - **Route reasons carry the trigger.** `transition_log` entries record `from`, `to`, `reason`, `ts`;
   `reason` distinguishes `failure_threshold_reached` / `probe_failure` / `probe_success` /
   `reset_timeout_elapsed` — never OR-ed together.
-- **Two cache backends, one contract.** `ResponseCache` (in-process) and `SharedRedisCache`
-  (Redis hash + `EXPIRE`) share `get()/set()` and both guardrails.
-- **Two breaker backends, one contract.** `CircuitBreaker` (per-process, `RLock`-guarded) and
-  `SharedRedisCircuitBreaker` (state in Redis, single-flight probe) — §10.3.
+- **Interchangeable cache backends.** `ResponseCache` (in-process), `SharedRedisCache`
+  (Redis hash + `EXPIRE`), and `ResilientCache` (Redis with in-process fallback, §10.7) all share
+  `get()/set()` and both guardrails.
+- **Interchangeable breaker backends.** `CircuitBreaker` (per-process, `RLock`-guarded),
+  `SharedRedisCircuitBreaker` (state in Redis, single-flight probe, §10.3), and
+  `ResilientCircuitBreaker` (Redis with local fallback, §10.7).
 
 ---
 
@@ -268,12 +270,15 @@ single-flight `probe` lock all live in Redis; every replica reads time from `red
 the per-process breaker over 4 — one replica's trip is every replica's trip. The default stays
 `memory` (no Redis dependency for the simple case).
 
+**Also addressed (§10.7): graceful degradation.** `ResilientCache` / `ResilientCircuitBreaker`
+(default `*.resilient: true`) wrap the Redis backend and transparently fall back to an in-process
+`ResponseCache` / `CircuitBreaker` when Redis is unreachable — at construction *or* mid-flight —
+then promote back after a recheck window. A Redis outage now degrades to the single-node behaviour
+instead of erroring.
+
 **Remaining, lower priority:**
 - The Redis breaker's methods are short Redis sequences, not one atomic transaction — a Lua script
   would close the last small races; the single-flight `probe` covers the one that matters.
-- **No graceful degradation if Redis is down.** Next: fall back to a local `CircuitBreaker` /
-  `ResponseCache` when `redis.ping()` fails, so a Redis outage degrades to today's per-process
-  behaviour instead of erroring.
 - **No per-tenant isolation** — one abusive caller can trip a shared breaker for everyone; add a
   token-bucket limiter keyed by API key.
 - **Quality is unmeasured** — the static fallback counts as "handled"; a real system needs a quality
@@ -373,6 +378,35 @@ failure → OPEN with `probe_failure` regardless of `failure_count`; HALF_OPEN c
 
 ### 10.6 SLO table — §3.
 
+### 10.7 Redis graceful degradation
+
+`ResilientCache` wraps `SharedRedisCache` + a local `ResponseCache`; `ResilientCircuitBreaker` wraps
+`SharedRedisCircuitBreaker` + a local `CircuitBreaker`. Both are the **default** when
+`*.backend: redis` (`*.resilient: true`). Behaviour:
+
+- Redis down at construction → start degraded, never raise.
+- A Redis call raises mid-flight → that call is served from the local backend and Redis is demoted
+  for `recheck_seconds` before the next attempt (`degraded_events` counts each fallback).
+- Cache `set` is mirrored to the local cache, and every breaker `record_*` is applied to the local
+  breaker too, so the fallback is always warm and consistent.
+- After the recheck window a healthy Redis call promotes the backend back automatically.
+
+`python scripts/redis_degradation_demo.py` (Redis "outage" simulated by swapping in a client that
+raises; full capture `reports/degradation.txt`):
+
+```
+== ResilientCache ==
+  1. Redis up   : degraded=False  get -> 'CLOSED / OPEN / HALF_OPEN ...'
+  2. Redis down : degraded=True  degraded_events=1  get -> 'CLOSED / OPEN / HALF_OPEN ...'  (no exception)
+  3. Redis back : degraded=False  get -> 'CLOSED / OPEN / HALF_OPEN ...'
+== ResilientCircuitBreaker ==
+  1. Redis up   : degraded=False  state=closed
+  2. Redis down : degraded=True  degraded_events=1  state=open  allow_request=False  (local state machine)
+  3. Redis back : degraded=False  state=closed  (shared state again)
+```
+
+Covered by `tests/test_resilient_fallback.py` (4 tests, no Redis required — they point at a dead URL).
+
 ---
 
 ## Appendix — file map
@@ -385,7 +419,9 @@ failure → OPEN with `probe_failure` regardless of `failure_count`; HALF_OPEN c
 | `reports/metrics_redis.json` | Redis response cache (`configs/redis.yaml`) — §6. |
 | `reports/metrics_redis_full.json` | Redis cache **and** breaker (`configs/redis_full.yaml`) — §10.3. |
 | `reports/redis_evidence.txt` | `redis-cli` KEYS/HGETALL/TTL, privacy scan, shared-cache + shared-breaker demos. |
+| `reports/concurrency.txt` · `cost_aware.txt` · `degradation.txt` | Stretch-goal demo captures (§10.2 / §10.4 / §10.7). |
 | `reports/test_output.txt` | Saved `pytest -v` + `ruff` + `mypy` log. |
 | `reports/generated_summary.md` | Auto table from `make report` (not this document). |
-| `scripts/run_scenarios.py` · `run_concurrent.py` · `redis_circuit_demo.py` · `redis_shared_state_demo.py` · `cost_aware_demo.py` | Added. |
+| `scripts/run_scenarios.py` · `run_concurrent.py` · `redis_circuit_demo.py` · `redis_degradation_demo.py` · `redis_shared_state_demo.py` · `cost_aware_demo.py` | Added. |
+| `tests/test_circuit_breaker_properties.py` · `tests/test_resilient_fallback.py` | Added. |
 | `configs/no_cache.yaml` · `redis.yaml` · `redis_full.yaml` · `cost_cap.yaml` | Added. |

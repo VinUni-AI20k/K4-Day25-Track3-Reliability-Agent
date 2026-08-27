@@ -160,6 +160,9 @@ class SharedRedisCircuitBreaker:
         reset_timeout_seconds: float,
         success_threshold: int = 1,
         prefix: str = "rl:cb:",
+        *,
+        connect_timeout: float = 10.0,
+        retries: int = 3,
     ):
         import uuid
 
@@ -177,9 +180,9 @@ class SharedRedisCircuitBreaker:
         self._redis: Any = redis_lib.Redis.from_url(
             redis_url,
             decode_responses=True,
-            socket_connect_timeout=10,
-            socket_timeout=10,
-            retry=Retry(ExponentialBackoff(cap=1.0, base=0.2), retries=3),
+            socket_connect_timeout=connect_timeout,
+            socket_timeout=connect_timeout,
+            retry=Retry(ExponentialBackoff(cap=1.0, base=0.2), retries=retries),
             retry_on_timeout=True,
             retry_on_error=[redis_lib.exceptions.ConnectionError, redis_lib.exceptions.TimeoutError],
         )
@@ -281,3 +284,148 @@ class SharedRedisCircuitBreaker:
         """Clear all keys for this breaker (test helper)."""
         for key in self._redis.scan_iter(f"{self._p}*"):
             self._redis.delete(key)
+
+
+# ---------------------------------------------------------------------------
+# Graceful degradation: shared Redis breaker with an in-process fallback
+# ---------------------------------------------------------------------------
+
+
+class ResilientCircuitBreaker:
+    """``SharedRedisCircuitBreaker`` that falls back to a local ``CircuitBreaker``
+    whenever Redis is unreachable, and promotes back once Redis returns.
+
+    Every ``record_*`` is applied to the local breaker as well, so on demotion
+    the local state machine is already warm and consistent. Reads (``state``,
+    ``allow_request``, ``transition_log``) prefer Redis while it is healthy.
+    Same public surface as :class:`CircuitBreaker`.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        redis_url: str,
+        failure_threshold: int,
+        reset_timeout_seconds: float,
+        success_threshold: int = 1,
+        *,
+        prefix: str = "rl:cb:",
+        recheck_seconds: float = 10.0,
+        connect_timeout: float = 10.0,
+        retries: int = 3,
+    ):
+        import redis as redis_lib
+
+        self.name = name
+        self._recheck_seconds = recheck_seconds
+        self._redis_error = redis_lib.exceptions.RedisError
+        self._local = CircuitBreaker(
+            name=name,
+            failure_threshold=failure_threshold,
+            reset_timeout_seconds=reset_timeout_seconds,
+            success_threshold=success_threshold,
+        )
+        self._degraded_until = 0.0
+        self.degraded_events = 0
+
+        self._redis_cb: SharedRedisCircuitBreaker | None
+        try:
+            self._redis_cb = SharedRedisCircuitBreaker(
+                name,
+                redis_url,
+                failure_threshold,
+                reset_timeout_seconds,
+                success_threshold,
+                prefix=prefix,
+                connect_timeout=connect_timeout,
+                retries=retries,
+            )
+            self._redis_cb._redis.ping()
+        except Exception:  # noqa: BLE001 - any construction failure ⇒ start degraded
+            self._redis_cb = None
+            self._degraded_until = time.monotonic() + recheck_seconds
+            self.degraded_events += 1
+
+    # -- backend selection --------------------------------------------
+    def _redis_ready(self) -> bool:
+        return self._redis_cb is not None and time.monotonic() >= self._degraded_until
+
+    def _demote(self) -> None:
+        self._degraded_until = time.monotonic() + self._recheck_seconds
+        self.degraded_events += 1
+
+    @property
+    def degraded(self) -> bool:
+        return not self._redis_ready()
+
+    # -- CircuitBreaker-compatible surface ---------------------------
+    @property
+    def state(self) -> CircuitState:
+        if self._redis_ready():
+            assert self._redis_cb is not None
+            try:
+                return self._redis_cb.state
+            except self._redis_error:
+                self._demote()
+        return self._local.state
+
+    @property
+    def transition_log(self) -> list[dict[str, Any]]:
+        if self._redis_ready():
+            assert self._redis_cb is not None
+            try:
+                return list(self._redis_cb.transition_log)
+            except self._redis_error:
+                self._demote()
+        return list(self._local.transition_log)
+
+    def allow_request(self) -> bool:
+        if self._redis_ready():
+            assert self._redis_cb is not None
+            try:
+                return self._redis_cb.allow_request()
+            except self._redis_error:
+                self._demote()
+        return self._local.allow_request()
+
+    def record_success(self) -> None:
+        self._local.record_success()
+        if self._redis_ready():
+            assert self._redis_cb is not None
+            try:
+                self._redis_cb.record_success()
+            except self._redis_error:
+                self._demote()
+
+    def record_failure(self) -> None:
+        self._local.record_failure()
+        if self._redis_ready():
+            assert self._redis_cb is not None
+            try:
+                self._redis_cb.record_failure()
+            except self._redis_error:
+                self._demote()
+
+    def call(self, fn: Callable[..., T], *args: object, **kwargs: object) -> T:
+        if not self.allow_request():
+            raise CircuitOpenError(f"circuit '{self.name}' is open")
+        try:
+            result = fn(*args, **kwargs)
+        except Exception:
+            self.record_failure()
+            raise
+        self.record_success()
+        return result
+
+    def reset(self) -> None:
+        self._local = CircuitBreaker(
+            name=self._local.name,
+            failure_threshold=self._local.failure_threshold,
+            reset_timeout_seconds=self._local.reset_timeout_seconds,
+            success_threshold=self._local.success_threshold,
+        )
+        if self._redis_cb is not None:
+            try:
+                self._redis_cb.reset()
+            except self._redis_error:
+                self._demote()

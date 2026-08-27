@@ -98,6 +98,7 @@ scripts/
   run_scenarios.py         # Per-scenario metrics -> reports/scenarios.{json,csv}
   run_concurrent.py        # Stretch: serial vs ThreadPoolExecutor comparison
   redis_circuit_demo.py    # Stretch: shared circuit-breaker state across instances
+  redis_degradation_demo.py   # Stretch: fall back to in-process cache/breaker if Redis dies
   redis_shared_state_demo.py  # Two-instance shared-cache proof
   cost_aware_demo.py       # Stretch: budget cap routing behaviour
 
@@ -306,6 +307,7 @@ make report       # generates report
 |---|---|---|
 | Concurrency (`ThreadPoolExecutor`) + breaker locks | `chaos.run_scenario_concurrent`, `CircuitBreaker._lock` | `python scripts/run_concurrent.py` |
 | Redis circuit state (shared, single-flight probe) | `circuit_breaker.SharedRedisCircuitBreaker`, `circuit_breaker.backend: redis` | `python scripts/redis_circuit_demo.py` · `configs/redis_full.yaml` |
+| Redis graceful degradation (fall back to in-process cache/breaker if Redis is down) | `cache.ResilientCache`, `circuit_breaker.ResilientCircuitBreaker`, `*.resilient: true` (default) | `python scripts/redis_degradation_demo.py` |
 | Cost-aware routing (80% → cheapest first, 100% → cache/static) | `gateway.ReliabilityGateway` `budget_usd`, `routing.budget_usd` | `python scripts/cost_aware_demo.py` |
 | Property-based tests (hypothesis) | `tests/test_circuit_breaker_properties.py` | `pytest tests/test_circuit_breaker_properties.py` |
 | SLO table | `reports/final_report.md` §3 | — |

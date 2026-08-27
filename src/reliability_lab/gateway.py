@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from reliability_lab.cache import ResponseCache, SharedRedisCache
+from reliability_lab.cache import ResilientCache, ResponseCache, SharedRedisCache
 from reliability_lab.circuit_breaker import (
     CircuitBreaker,
     CircuitOpenError,
+    ResilientCircuitBreaker,
     SharedRedisCircuitBreaker,
 )
 from reliability_lab.providers import FakeLLMProvider, ProviderError
 
 _STATIC_DEGRADED = "The service is temporarily degraded. Please try again soon."
 
-BreakerLike = CircuitBreaker | SharedRedisCircuitBreaker
+BreakerLike = CircuitBreaker | SharedRedisCircuitBreaker | ResilientCircuitBreaker
+CacheLike = ResponseCache | SharedRedisCache | ResilientCache
 
 
 @dataclass(slots=True)
@@ -33,7 +35,7 @@ class ReliabilityGateway:
         self,
         providers: list[FakeLLMProvider],
         breakers: dict[str, BreakerLike],
-        cache: ResponseCache | SharedRedisCache | None = None,
+        cache: CacheLike | None = None,
         *,
         budget_usd: float | None = None,
     ):

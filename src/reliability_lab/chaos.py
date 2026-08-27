@@ -8,10 +8,14 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from reliability_lab.cache import ResponseCache, SharedRedisCache
-from reliability_lab.circuit_breaker import CircuitBreaker, SharedRedisCircuitBreaker
+from reliability_lab.cache import ResilientCache, ResponseCache, SharedRedisCache
+from reliability_lab.circuit_breaker import (
+    CircuitBreaker,
+    ResilientCircuitBreaker,
+    SharedRedisCircuitBreaker,
+)
 from reliability_lab.config import LabConfig, ScenarioConfig
-from reliability_lab.gateway import BreakerLike, GatewayResponse, ReliabilityGateway
+from reliability_lab.gateway import BreakerLike, CacheLike, GatewayResponse, ReliabilityGateway
 from reliability_lab.metrics import RunMetrics
 from reliability_lab.providers import FakeLLMProvider
 
@@ -79,35 +83,53 @@ def build_gateway(
         fail_rate = provider_overrides.get(p.name, p.fail_rate) if provider_overrides else p.fail_rate
         providers.append(FakeLLMProvider(p.name, fail_rate, p.base_latency_ms, p.cost_per_1k_tokens))
 
+    cb = config.circuit_breaker
     breakers: dict[str, BreakerLike] = {}
     for p in config.providers:
-        if config.circuit_breaker.backend == "redis":
-            rb = SharedRedisCircuitBreaker(
-                name=p.name,
-                redis_url=config.cache.redis_url,
-                failure_threshold=config.circuit_breaker.failure_threshold,
-                reset_timeout_seconds=config.circuit_breaker.reset_timeout_seconds,
-                success_threshold=config.circuit_breaker.success_threshold,
-            )
+        if cb.backend == "redis":
+            rb: BreakerLike
+            if cb.resilient:
+                rb = ResilientCircuitBreaker(
+                    p.name,
+                    config.cache.redis_url,
+                    cb.failure_threshold,
+                    cb.reset_timeout_seconds,
+                    cb.success_threshold,
+                )
+            else:
+                rb = SharedRedisCircuitBreaker(
+                    name=p.name,
+                    redis_url=config.cache.redis_url,
+                    failure_threshold=cb.failure_threshold,
+                    reset_timeout_seconds=cb.reset_timeout_seconds,
+                    success_threshold=cb.success_threshold,
+                )
             rb.reset()  # clean slate per chaos run
             breakers[p.name] = rb
         else:
             breakers[p.name] = CircuitBreaker(
                 name=p.name,
-                failure_threshold=config.circuit_breaker.failure_threshold,
-                reset_timeout_seconds=config.circuit_breaker.reset_timeout_seconds,
-                success_threshold=config.circuit_breaker.success_threshold,
+                failure_threshold=cb.failure_threshold,
+                reset_timeout_seconds=cb.reset_timeout_seconds,
+                success_threshold=cb.success_threshold,
                 clock=sim_clock if sim_clock is not None else time.monotonic,
             )
 
-    cache: ResponseCache | SharedRedisCache | None = None
+    cache: CacheLike | None = None
     if config.cache.enabled:
         if config.cache.backend == "redis":
-            cache = SharedRedisCache(
-                config.cache.redis_url,
-                config.cache.ttl_seconds,
-                config.cache.similarity_threshold,
-            )
+            if config.cache.resilient:
+                cache = ResilientCache(
+                    config.cache.redis_url,
+                    config.cache.ttl_seconds,
+                    config.cache.similarity_threshold,
+                )
+            else:
+                cache = SharedRedisCache(
+                    config.cache.redis_url,
+                    config.cache.ttl_seconds,
+                    config.cache.similarity_threshold,
+                )
         else:
             cache = ResponseCache(config.cache.ttl_seconds, config.cache.similarity_threshold)
 
