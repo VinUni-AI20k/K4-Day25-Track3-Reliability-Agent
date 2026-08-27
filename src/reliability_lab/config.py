@@ -18,6 +18,8 @@ class CircuitBreakerConfig(BaseModel):
     failure_threshold: int = Field(gt=0)
     reset_timeout_seconds: float = Field(gt=0)
     success_threshold: int = Field(gt=0)
+    backend: str = "memory"  # "memory" (per-process) or "redis" (shared across instances)
+    resilient: bool = True  # backend=="redis": auto-fall back to a local breaker if Redis is down
 
 
 class CacheConfig(BaseModel):
@@ -26,10 +28,18 @@ class CacheConfig(BaseModel):
     ttl_seconds: int = Field(gt=0)
     similarity_threshold: float = Field(ge=0.0, le=1.0)
     redis_url: str = "redis://localhost:6379/0"
+    resilient: bool = True  # backend=="redis": auto-fall back to a local cache if Redis is down
 
 
 class LoadTestConfig(BaseModel):
     requests: int = Field(gt=0)
+    concurrency: int = Field(default=1, gt=0)  # threads for the concurrent load runner
+
+
+class RoutingConfig(BaseModel):
+    # Cost-aware routing. None disables it. Below 80% of budget: normal order.
+    # 80–100%: cheapest provider first. At/above 100%: cache-only, else static.
+    budget_usd: float | None = Field(default=None, gt=0)
 
 
 class ScenarioConfig(BaseModel):
@@ -43,9 +53,10 @@ class LabConfig(BaseModel):
     circuit_breaker: CircuitBreakerConfig
     cache: CacheConfig
     load_test: LoadTestConfig
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
     scenarios: list[ScenarioConfig] = Field(default_factory=list)
 
 
 def load_config(path: str | Path) -> LabConfig:
-    raw: dict[str, Any] = yaml.safe_load(Path(path).read_text())
+    raw: dict[str, Any] = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     return LabConfig.model_validate(raw)

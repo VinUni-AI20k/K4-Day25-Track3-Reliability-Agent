@@ -1,0 +1,78 @@
+# make test  —  2026-08-27T10:02:42Z  (Redis up)
+# python 3.11.4, pytest pytest 9.1.1, hypothesis 6.165.10
+
+C:\Users\Admin\AppData\Local\Programs\Python\Python311\Lib\site-packages\requests\__init__.py:113: RequestsDependencyWarning: urllib3 (2.5.0) or chardet (7.4.3)/charset_normalizer (3.4.3) doesn't match a supported version!
+  warnings.warn(
+============================= test session starts =============================
+platform win32 -- Python 3.11.4, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\Admin\AppData\Local\Programs\Python\Python311\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: D:\VinAI\K4-Day25-Track3-Reliability-Agent_2A202601570_LeThiHaiYen
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.10.0, dash-3.2.0, hypothesis-6.165.10, langsmith-0.11.1, cov-7.1.0
+collecting ... collected 53 items
+
+tests/test_cache.py::test_exact_match_returns_hit PASSED                 [  1%]
+tests/test_cache.py::test_similar_query_returns_hit PASSED               [  3%]
+tests/test_cache.py::test_dissimilar_query_returns_miss PASSED           [  5%]
+tests/test_cache.py::test_ttl_expiry PASSED                              [  7%]
+tests/test_cache.py::test_privacy_query_bypasses_cache PASSED            [  9%]
+tests/test_cache.py::test_privacy_query_not_stored PASSED                [ 11%]
+tests/test_cache.py::test_false_hit_detection_different_years PASSED     [ 13%]
+tests/test_cache.py::test_same_year_not_flagged_as_false_hit PASSED      [ 15%]
+tests/test_cache.py::test_ngram_similarity_scores PASSED                 [ 16%]
+tests/test_circuit_breaker.py::test_starts_closed PASSED                 [ 18%]
+tests/test_circuit_breaker.py::test_opens_after_failure_threshold PASSED [ 20%]
+tests/test_circuit_breaker.py::test_does_not_open_below_threshold PASSED [ 22%]
+tests/test_circuit_breaker.py::test_success_resets_failure_count PASSED  [ 24%]
+tests/test_circuit_breaker.py::test_open_transitions_to_half_open_after_timeout PASSED [ 26%]
+tests/test_circuit_breaker.py::test_half_open_closes_on_success PASSED   [ 28%]
+tests/test_circuit_breaker.py::test_half_open_reopens_on_failure PASSED  [ 30%]
+tests/test_circuit_breaker.py::test_call_raises_circuit_open_error PASSED [ 32%]
+tests/test_circuit_breaker.py::test_call_records_success_and_failure PASSED [ 33%]
+tests/test_circuit_breaker.py::test_transition_log_records_state_changes PASSED [ 35%]
+tests/test_circuit_breaker.py::test_no_duplicate_transitions PASSED      [ 37%]
+tests/test_circuit_breaker.py::test_success_threshold_greater_than_one PASSED [ 39%]
+tests/test_circuit_breaker_properties.py::test_state_always_valid_and_counts_nonnegative PASSED [ 41%]
+tests/test_circuit_breaker_properties.py::test_transition_log_is_a_well_formed_chain PASSED [ 43%]
+tests/test_circuit_breaker_properties.py::test_below_threshold_never_opens PASSED [ 45%]
+tests/test_circuit_breaker_properties.py::test_exactly_threshold_consecutive_failures_opens PASSED [ 47%]
+tests/test_circuit_breaker_properties.py::test_open_denies_until_reset_then_probes PASSED [ 49%]
+tests/test_circuit_breaker_properties.py::test_half_open_failure_always_reopens_with_probe_reason PASSED [ 50%]
+tests/test_circuit_breaker_properties.py::test_half_open_closes_only_after_success_threshold PASSED [ 52%]
+tests/test_config.py::test_default_config_loads PASSED                   [ 54%]
+tests/test_config.py::test_scenarios_loaded PASSED                       [ 56%]
+tests/test_gateway_contract.py::test_gateway_returns_response_with_route_reason PASSED [ 58%]
+tests/test_gateway_contract.py::test_gateway_falls_back_when_primary_fails PASSED [ 60%]
+tests/test_gateway_contract.py::test_gateway_returns_static_fallback_when_all_fail PASSED [ 62%]
+tests/test_gateway_contract.py::test_gateway_uses_cache PASSED           [ 64%]
+tests/test_metrics.py::test_percentile PASSED                            [ 66%]
+tests/test_metrics.py::test_report_dict_contains_required_metrics PASSED [ 67%]
+tests/test_redis_cache.py::test_redis_connection PASSED                  [ 69%]
+tests/test_redis_cache.py::test_set_and_exact_get PASSED                 [ 71%]
+tests/test_redis_cache.py::test_ttl_expiry PASSED                        [ 73%]
+tests/test_redis_cache.py::test_shared_state_across_instances PASSED     [ 75%]
+tests/test_redis_cache.py::test_privacy_query_not_cached PASSED          [ 77%]
+tests/test_redis_cache.py::test_false_hit_different_years PASSED         [ 79%]
+tests/test_resilient_fallback.py::test_resilient_cache_starts_degraded_and_serves_locally PASSED [ 81%]
+tests/test_resilient_fallback.py::test_resilient_cache_keeps_privacy_and_false_hit_guardrails_while_degraded PASSED [ 83%]
+tests/test_resilient_fallback.py::test_resilient_breaker_starts_degraded_and_uses_local_state_machine PASSED [ 84%]
+tests/test_resilient_fallback.py::test_resilient_breaker_call_fails_fast_when_open_locally PASSED [ 86%]
+tests/test_todo_requirements.py::test_similarity_uses_ngrams_not_jaccard XPASS [ 88%]
+tests/test_todo_requirements.py::test_semantic_cache_should_not_false_hit_different_intent XPASS [ 90%]
+tests/test_todo_requirements.py::test_privacy_queries_never_cached XPASS [ 92%]
+tests/test_todo_requirements.py::test_circuit_breaker_denies_when_open XPASS [ 94%]
+tests/test_todo_requirements.py::test_half_open_failure_gives_probe_failure_reason XPASS [ 96%]
+tests/test_todo_requirements.py::test_gateway_routes_through_providers XPASS [ 98%]
+tests/test_todo_requirements.py::test_metrics_csv_export XPASS (Stud...) [100%]
+
+======================= 46 passed, 7 xpassed in 23.35s ========================
+
+# ruff check src scripts
+All checks passed!
+
+# mypy src (strict)
+Success: no issues found in 8 source files
+
+# determinism: two 'make run-chaos' -> metrics.json identical in every field incl circuit_open_count (26) and recovery_time_ms (2000.0). Verified.

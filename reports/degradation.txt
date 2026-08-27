@@ -1,0 +1,12 @@
+# scripts/redis_degradation_demo.py  —  2026-08-27T09:49:47Z
+# Redis 'outage' is simulated by swapping the live client for one that raises.
+
+== ResilientCache ==
+  1. Redis up   : degraded=False  get -> 'CLOSED / OPEN / HALF_OPEN ...'
+  2. Redis down : degraded=True  degraded_events=1  get -> 'CLOSED / OPEN / HALF_OPEN ...'  (no exception)
+  3. Redis back : degraded=False  get -> 'CLOSED / OPEN / HALF_OPEN ...'
+
+== ResilientCircuitBreaker ==
+  1. Redis up   : degraded=False  state=closed
+  2. Redis down : degraded=True  degraded_events=1  state=open  allow_request=False  (local state machine)
+  3. Redis back : degraded=False  state=closed  (shared state again)

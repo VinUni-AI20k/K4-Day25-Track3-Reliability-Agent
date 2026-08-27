@@ -1,0 +1,5 @@
+scenario,description,total_requests,availability,error_rate,latency_p50_ms,latency_p95_ms,latency_p99_ms,fallback_success_rate,cache_hit_rate,fallback_successes,static_fallbacks,cache_hits,circuit_open_count,recovery_time_ms,estimated_cost,estimated_cost_saved,result
+all_healthy,Baseline - both providers healthy (0% induced failure),100,1.0,0.0,214.75,239.46,239.56,0.0,0.6,0,0,60,0,,0.02379,0.06,pass
+primary_timeout_100,Primary fails 100% - all traffic must fall back to backup; primary breaker opens and never recovers,100,0.97,0.03,286.05,319.31,319.91,0.9268,0.59,38,3,59,11,,0.01413,0.059,pass
+primary_flaky_55,Primary fails 55% - breaker oscillates: opens on failure bursts AND recovers (open -> half_open -> closed) when a probe succeeds; cache + backup keep availability at 100%,100,1.0,0.0,266.61,316.27,318.86,1.0,0.63,25,0,63,3,2000.0,0.016474,0.063,pass
+both_degraded_hard,"Primary 80% / backup 50% - both breakers open, static fallback absorbs the storm and fails fast",100,0.74,0.26,290.18,314.27,318.94,0.4468,0.47,21,26,47,12,2000.0,0.010624,0.047,pass
